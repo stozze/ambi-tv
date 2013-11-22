@@ -49,6 +49,7 @@ struct ambitv_main_conf {
    
    int            cur_prog, ambitv_on, gpio_fd;
    int            button_cnt;
+   int            button_mode;
    struct timeval last_button_press;
    volatile int   running;
 };
@@ -245,9 +246,15 @@ ambitv_runloop()
                
          if (millis > BUTTON_MILLIS) {
             if (conf.button_cnt > 1) {
-               ret = ambitv_cycle_next_program();
+               if (conf.button_mode == 0 || conf.button_mode == 2)
+                  ret = ambitv_cycle_next_program();
+               else if (conf.button_mode == 1)
+                  ret = ambitv_toggle_paused();
             } else {
-               ret = ambitv_toggle_paused();
+               if (conf.button_mode == 0)
+                  ret = ambitv_toggle_paused();
+               else if (conf.button_mode == 1 || conf.button_mode == 2)
+                  ret = ambitv_cycle_next_program();
             }
             
             conf.button_cnt = 0;
@@ -272,6 +279,9 @@ ambitv_usage(const char* name)
       "\n"
       "options:\n"
       "\t-b/--button-gpio [i]     gpio pin to use as physical button. function disabled if i < 0. (default: -1).\n"
+      "\t-B/--button-mode [i]     0 = click toggle between running/paused, double-click cycle between programs. (default: 0).\n"
+      "\t                         1 = click cycle between programs, double-click toggle between running/paused.\n"
+      "\t                         2 = click cycle between programs.\n"
       "\t-f/--file [path]         use the configuration file at [path] (default: %s).\n"
       "\t-h,--help                display this help text.\n"
       "\t-p,--program [i]         run the [i]-th program from the configuration file on start-up.\n"
@@ -287,6 +297,7 @@ ambitv_main_configure(int argc, char** argv)
 
    static struct option lopts[] = {
       { "button-gpio", required_argument, 0, 'b' },
+      { "button-mode", required_argument, 0, 'B' },
       { "file", required_argument, 0, 'f' },
       { "help", no_argument, 0, 'h' },
       { "program", required_argument, 0, 'p' },
@@ -294,7 +305,7 @@ ambitv_main_configure(int argc, char** argv)
    };
 
    while (1) {      
-      c = getopt_long(argc, argv, "b:f:hp:", lopts, NULL);
+      c = getopt_long(argc, argv, "B:b:f:hp:", lopts, NULL);
 
       if (c < 0)
          break;
@@ -305,6 +316,24 @@ ambitv_main_configure(int argc, char** argv)
                conf.config_path = strdup(optarg);
             }
             
+            break;
+         }
+         
+         case 'B': {
+            if (NULL != optarg) {
+               char* eptr = NULL;
+               long nbuf = strtol(optarg, &eptr, 10);
+               
+               if ('\0' == *eptr && (nbuf == 0 || nbuf == 1 || nbuf == 2)) {
+                   conf.button_mode = (int)nbuf;
+               }
+               else {
+                  ambitv_log(ambitv_log_error, LOGNAME "invalid argument for '%s': '%s'.\n",
+                     argv[optind-2], optarg);
+                  ambitv_usage(argv[0]);
+                  return -1;
+               }
+            }
             break;
          }
          
@@ -376,6 +405,7 @@ main(int argc, char** argv)
    conf.ambitv_on       = 1;
    conf.gpio_fd         = -1;
    conf.running         = 1;
+   conf.button_mode     = 0;
    
    ret = ambitv_main_configure(argc, argv);
    if (ret < 0)
@@ -446,8 +476,18 @@ main(int argc, char** argv)
       "\tpress <space> to cycle between programs.\n"
       "\tpress 't' to toggle pause.\n");
    if (conf.gpio_idx >= 0) {
-      ambitv_log(ambitv_log_info,
-         "\tphysical (gpio) button: click to pause/resume, double-click to cycle between programs.\n");
+      if (conf.button_mode == 0) {
+         ambitv_log(ambitv_log_info,
+            "\tphysical (gpio) button: click to pause/resume, double-click to cycle between programs.\n");
+      }
+      else if (conf.button_mode == 1) {
+         ambitv_log(ambitv_log_info,
+            "\tphysical (gpio) button: click to cycle between programs, double-click to pause/resume.\n"); 
+      }
+      else if (conf.button_mode == 2) {
+         ambitv_log(ambitv_log_info,
+            "\tphysical (gpio) button: click to cycle between programs.\n"); 
+      }
    }
    
    while (conf.running && ambitv_runloop() >= 0);
