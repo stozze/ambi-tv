@@ -27,6 +27,8 @@
 #include <string.h>
 #include <getopt.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <termios.h>
 
 #include "parse-conf.h"
@@ -50,6 +52,7 @@ struct ambitv_main_conf {
    int            cur_prog, ambitv_on, gpio_fd;
    int            button_cnt;
    int            button_mode;
+   int            daemon_mode;
    struct timeval last_button_press;
    volatile int   running;
 };
@@ -149,13 +152,14 @@ ambitv_runloop()
    struct timeval tv;
    
    FD_ZERO(&fds); FD_ZERO(&ex_fds);
-   FD_SET(STDIN_FILENO, &fds);
    if (conf.gpio_fd >= 0)
       FD_SET(conf.gpio_fd, &ex_fds);
    
    tv.tv_sec   = 0;
    tv.tv_usec  = 500000;
    
+   if (!conf.daemon_mode) {
+   FD_SET(STDIN_FILENO, &fds);      
    ret = select(MAX(STDIN_FILENO, conf.gpio_fd)+1, &fds, NULL, &ex_fds, &tv);
       
    if (ret < 0) {
@@ -202,6 +206,7 @@ ambitv_runloop()
          default:
             break;
       }
+   }
    }
    
    if (conf.gpio_fd >= 0 && FD_ISSET(conf.gpio_fd, &ex_fds)) {
@@ -282,6 +287,7 @@ ambitv_usage(const char* name)
       "\t-B/--button-mode [i]     0 = click toggle between running/paused, double-click cycle between programs. (default: 0).\n"
       "\t                         1 = click cycle between programs, double-click toggle between running/paused.\n"
       "\t                         2 = click cycle between programs.\n"
+      "\t-d/--daemon              run as background process.\n"
       "\t-f/--file [path]         use the configuration file at [path] (default: %s).\n"
       "\t-h,--help                display this help text.\n"
       "\t-p,--program [i]         run the [i]-th program from the configuration file on start-up.\n"
@@ -298,6 +304,7 @@ ambitv_main_configure(int argc, char** argv)
    static struct option lopts[] = {
       { "button-gpio", required_argument, 0, 'b' },
       { "button-mode", required_argument, 0, 'B' },
+      { "daemon", no_argument, 0, 'd' },
       { "file", required_argument, 0, 'f' },
       { "help", no_argument, 0, 'h' },
       { "program", required_argument, 0, 'p' },
@@ -305,7 +312,7 @@ ambitv_main_configure(int argc, char** argv)
    };
 
    while (1) {      
-      c = getopt_long(argc, argv, "B:b:f:hp:", lopts, NULL);
+      c = getopt_long(argc, argv, "dB:b:f:hp:", lopts, NULL);
 
       if (c < 0)
          break;
@@ -359,6 +366,11 @@ ambitv_main_configure(int argc, char** argv)
             break;
          }
          
+         case 'd': {
+            conf.daemon_mode = 1;
+            break;
+         }
+         
          case 'h': {
             ambitv_usage(argv[0]);
             exit(0);
@@ -379,14 +391,66 @@ ambitv_main_configure(int argc, char** argv)
    return ret;
 }
 
+static int
+ambitv_start_daemon() {
+   int ret = 0;
+   
+   signal(SIGCHLD, SIG_IGN);
+   signal(SIGHUP, SIG_IGN);   
+   
+   /* Our process ID and Session ID */
+   pid_t pid, sid;
+   
+   /* Fork off the parent process */
+   pid = fork();
+   if (pid < 0) {
+      ambitv_log(ambitv_log_error, LOGNAME "unable to fork.\n");
+      ret = -1;
+      goto err;
+   }
+   /* If we got a good PID, then we can exit the parent process. */
+   if (pid > 0) {
+      exit(EXIT_SUCCESS);
+   }
+   
+   /* Change the file mode mask */
+   umask(0);
+
+   /* Change to syslog here */
+   ambitv_open_syslog();
+   
+   /* Create a new SID for the child process */
+   sid = setsid();
+   if (sid < 0) {
+      ambitv_log(ambitv_log_error, LOGNAME "unable to set new SID for child process.\n");
+      ret = -2;
+      goto err;
+   }   
+   
+   /* Change the current working directory */
+   if ((chdir("/")) < 0) {
+      ambitv_log(ambitv_log_error, LOGNAME "unable to chdir to /.\n");
+      ret = -3;
+      goto err;
+   }
+   
+   /* Close out the standard file descriptors */
+   close(STDIN_FILENO);
+   close(STDOUT_FILENO);
+   close(STDERR_FILENO);
+ 
+err:
+   return ret;
+}
+
 int
 main(int argc, char** argv)
 {
    int ret = 0, i;
    struct ambitv_conf_parser* parser;
    struct termios tt;
-   unsigned long tt_orig;
-   
+   unsigned long tt_orig = 0;
+    
    signal(SIGINT, ambitv_signal_handler);
    signal(SIGTERM, ambitv_signal_handler);
    
@@ -406,11 +470,12 @@ main(int argc, char** argv)
    conf.gpio_fd         = -1;
    conf.running         = 1;
    conf.button_mode     = 0;
+   conf.daemon_mode     = 0;
    
    ret = ambitv_main_configure(argc, argv);
    if (ret < 0)
       return -1;
-   
+      
    parser = ambitv_conf_parser_create();
    parser->f_handle_block = ambitv_handle_config_block;
    ret = ambitv_conf_parser_read_config_file(parser, conf.config_path);
@@ -430,6 +495,12 @@ main(int argc, char** argv)
    ambitv_log(ambitv_log_info, LOGNAME "configuration finished, %d programs available.\n",
       ambitv_num_programs);
    
+   if (conf.daemon_mode) {
+      ambitv_log(ambitv_log_info, LOGNAME "running as daemon from now on.\n");
+      
+      ambitv_start_daemon();
+   }   
+   
    for (i=0; i<ambitv_num_programs; i++)
       ambitv_log(ambitv_log_info, "\t%s\n", ambitv_programs[i]->name);
    
@@ -445,10 +516,12 @@ main(int argc, char** argv)
       }
    }
    
-   tcgetattr(STDIN_FILENO, &tt);
-   tt_orig = tt.c_lflag;
-   tt.c_lflag &= ~(ICANON | ECHO);
-   tcsetattr(STDIN_FILENO, TCSANOW, &tt);
+   if (!conf.daemon_mode) {   
+      tcgetattr(STDIN_FILENO, &tt);
+      tt_orig = tt.c_lflag;
+      tt.c_lflag &= ~(ICANON | ECHO);
+      tcsetattr(STDIN_FILENO, TCSANOW, &tt);
+   }
    
    if (conf.program_idx >= ambitv_num_programs) {
       ambitv_log(ambitv_log_error, LOGNAME "program at index %d requested, but only %d programs available. aborting...\n",
@@ -468,13 +541,15 @@ main(int argc, char** argv)
    
    ambitv_log(ambitv_log_info, LOGNAME "started initial program '%s'.\n",
       ambitv_programs[conf.cur_prog]->name);
+   if (!conf.daemon_mode) {
+      fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
    
-   fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK);
+      ambitv_log(ambitv_log_info,
+         LOGNAME "************* start-up complete\n"
+         "\tpress <space> to cycle between programs.\n"
+         "\tpress 't' to toggle pause.\n");
+   }
    
-   ambitv_log(ambitv_log_info,
-      LOGNAME "************* start-up complete\n"
-      "\tpress <space> to cycle between programs.\n"
-      "\tpress 't' to toggle pause.\n");
    if (conf.gpio_idx >= 0) {
       if (conf.button_mode == 0) {
          ambitv_log(ambitv_log_info,
@@ -489,7 +564,7 @@ main(int argc, char** argv)
             "\tphysical (gpio) button: click to cycle between programs.\n"); 
       }
    }
-   
+      
    while (conf.running && ambitv_runloop() >= 0);
    
    ret = ambitv_program_stop_current();
@@ -501,11 +576,15 @@ main(int argc, char** argv)
    }
 
 errReturn:   
-   tt.c_lflag = tt_orig;
-   tcsetattr(STDIN_FILENO, TCSANOW, &tt);
-   
+   if (!conf.daemon_mode) {
+      tt.c_lflag = tt_orig;
+      tcsetattr(STDIN_FILENO, TCSANOW, &tt);
+   }
+
    if (conf.gpio_fd >= 0)
       ambitv_gpio_close_button_irq(conf.gpio_fd, conf.gpio_idx);
+
+   ambitv_close_logs();
    
    return ret;
 }

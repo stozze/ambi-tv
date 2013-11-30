@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <syslog.h>
 
 #include "log.h"
 
@@ -33,6 +34,17 @@ ambitv_log_console(enum ambitv_log_priority priority, const char* fmt, va_list a
       vprintf(fmt, args);
 }
 
+static void
+ambitv_log_syslog(enum ambitv_log_priority priority, const char* fmt, va_list args) 
+{
+   if (priority >= ambitv_log_error)
+      vsyslog(LOG_ERR, fmt, args);
+   else if (priority == ambitv_log_warn)
+      vsyslog(LOG_WARNING, fmt, args);
+   else
+      vsyslog(LOG_INFO, fmt, args);
+}
+
 void
 ambitv_log(enum ambitv_log_priority priority, const char* fmt, ...)
 {
@@ -40,6 +52,10 @@ ambitv_log(enum ambitv_log_priority priority, const char* fmt, ...)
    va_start(args, fmt);
    
    switch (ambitv_log_mode) {
+      case ambitv_log_mode_syslog: {
+         ambitv_log_syslog(priority, fmt, args);
+         break;
+      }
       case ambitv_log_mode_console:
       default: {
          ambitv_log_console(priority, fmt, args);
@@ -48,4 +64,15 @@ ambitv_log(enum ambitv_log_priority priority, const char* fmt, ...)
    }
    
    va_end(args);
+}
+
+void 
+ambitv_open_syslog() {
+   openlog("ambi-tv", LOG_PID, LOG_USER);
+   ambitv_log_mode = ambitv_log_mode_syslog;
+}
+
+void 
+ambitv_close_logs() {
+   closelog();
 }

@@ -21,7 +21,8 @@
 #define __AMBITV_LOG_H__
 
 enum ambitv_log_mode {
-   ambitv_log_mode_console
+   ambitv_log_mode_console,
+   ambitv_log_mode_syslog
 };
 
 enum ambitv_log_priority {
@@ -34,5 +35,9 @@ extern enum ambitv_log_mode ambitv_log_mode;
 
 void
 ambitv_log(enum ambitv_log_priority priority, const char* fmt, ...);
+void 
+ambitv_open_syslog();
+void 
+ambitv_close_logs();
 
 #endif // __AMBITV_LOG_H__
