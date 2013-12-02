@@ -287,7 +287,7 @@ ambitv_usage(const char* name)
       "\t-B/--button-mode [i]     0 = click toggle between running/paused, double-click cycle between programs. (default: 0).\n"
       "\t                         1 = click cycle between programs, double-click toggle between running/paused.\n"
       "\t                         2 = click cycle between programs.\n"
-      "\t-d/--daemon              run as background process.\n"
+      "\t-d/--daemon              run as background process (log output goes to /var/log/user.log).\n"
       "\t-f/--file [path]         use the configuration file at [path] (default: %s).\n"
       "\t-h,--help                display this help text.\n"
       "\t-p,--program [i]         run the [i]-th program from the configuration file on start-up.\n"

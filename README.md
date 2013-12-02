@@ -63,6 +63,8 @@ Clone the git repository on your Raspberry Pi and type `make` to build it. After
 ambi-tv takes the following command line switches:
 
 - `-b/--button-gpio [i]`: Use the i-th GPIO pin for the push button. If you connected the push button as described above, use `3` as argument here (`1` if you have an older, revA Raspberry Pi). The default is `-1`, meaning "Don't use the push button.".
+- `-B/--button-mode [i]`: `0` = click toggle between running/paused, double-click cycle between programs. (default: `0`). `1` = click cycle between programs, double-click toggle between running/paused. `2` = click cycle between programs.
+- `-d/--daemon`: run as background process (log output goes to /var/log/user.log).
 - `-f/--file [path]`: The path to the configuration file to use (see below). The default is `/etc/ambi-tv.conf`.
 - `-h,--help`: Prints the help text and exits.
 - `-p,--program [i]`: ambi-tv will start the i-th program defined in the configuration file after start-up. The default is `0`, e.g. the first program.
